@@ -1,4 +1,4 @@
-import type { CutPlan } from "@/lib/solver/types";
+import type { CutPlan, OptimizationMode } from "@/lib/solver/types";
 
 type PrintableFormItem = {
   id: string;
@@ -52,13 +52,38 @@ function getPrintableItems(form: PrintableFormState): PrintableFormItem[] {
   return form.items.filter((item) => item.length.trim() && item.quantity.trim());
 }
 
+// 최적화 모드 값을 보고서에 표시할 한국어 라벨로 변환한다.
+function getOptimizationModeLabel(mode: OptimizationMode): string {
+  const labels: Record<OptimizationMode, string> = {
+    balanced: "균형 우선",
+    "min-remainder": "최소 잔재 우선",
+    "min-length-changes": "최소 길이 변경 우선",
+    "min-stock-changes": "최소 원자재 변경 우선"
+  };
+
+  return labels[mode];
+}
+
 // 계산 방식과 최적 여부를 작업 지시서용 상태 문구로 변환한다.
 function getReportStatus(plan: CutPlan): string {
   if (plan.isOptimal) {
     return plan.method === "exact" ? "최적해 확인" : "최적 결과";
   }
 
-  return "근사 결과";
+  return getOptimizationModeLabel(plan.optimizationMode);
+}
+
+// 작업 단계 안의 절단 지시를 보고서용 문자열로 변환한다.
+function formatWorkStepCuts(step: CutPlan["workSteps"][number]): string {
+  return step.cuts
+    .map((cut) => {
+      if (step.groupType === "length") {
+        return `원자재 ${cut.barNumber}번 ${cut.quantity}개`;
+      }
+
+      return `${formatMillimeter(cut.length)} ${cut.quantity}개`;
+    })
+    .join(", ");
 }
 
 // 작업자가 들고 바로 확인할 수 있는 인쇄 전용 절단 보고서를 렌더링한다.
@@ -100,12 +125,48 @@ export function PrintCutReport({ plan, form, generatedAt }: PrintCutReportProps)
               <th>절단 손실</th>
               <td>{form.kerf || "0"}mm</td>
             </tr>
+            <tr>
+              <th>최적화 기준</th>
+              <td>{getOptimizationModeLabel(plan.optimizationMode)}</td>
+              <th>작업 변경</th>
+              <td>
+                길이 {plan.score.lengthChangeCount}회 / 원자재 {plan.score.stockChangeCount}회
+              </td>
+            </tr>
           </tbody>
         </table>
       </section>
 
       <section className="report-section">
-        <h2>2. 입력 절단 목록</h2>
+        <h2>2. 현장 작업 순서</h2>
+        <table className="report-table report-cut-table">
+          <thead>
+            <tr>
+              <th>순서</th>
+              <th>작업 블록</th>
+              <th>세부 지시</th>
+              <th>확인</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plan.workSteps.map((step) => (
+              <tr key={step.id}>
+                <td>{step.order}</td>
+                <td>
+                  {step.title}
+                  <br />
+                  <span className="report-muted">{step.subtitle}</span>
+                </td>
+                <td>{formatWorkStepCuts(step)}</td>
+                <td className="check-cell" />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="report-section">
+        <h2>3. 입력 절단 목록</h2>
         <table className="report-table">
           <thead>
             <tr>
@@ -129,7 +190,7 @@ export function PrintCutReport({ plan, form, generatedAt }: PrintCutReportProps)
       </section>
 
       <section className="report-section">
-        <h2>3. 반복 절단 패턴</h2>
+        <h2>4. 반복 절단 패턴</h2>
         <table className="report-table">
           <thead>
             <tr>
@@ -153,7 +214,7 @@ export function PrintCutReport({ plan, form, generatedAt }: PrintCutReportProps)
       </section>
 
       <section className="report-section">
-        <h2>4. 원자재별 절단 지시</h2>
+        <h2>5. 원자재별 절단 지시</h2>
         <table className="report-table report-cut-table">
           <thead>
             <tr>
@@ -177,7 +238,7 @@ export function PrintCutReport({ plan, form, generatedAt }: PrintCutReportProps)
       </section>
 
       <section className="report-section report-notes">
-        <h2>5. 작업 전 확인</h2>
+        <h2>6. 작업 전 확인</h2>
         <ul>
           <li>절단 전 원자재 길이와 입력 치수를 다시 확인하세요.</li>
           <li>절단 손실값이 실제 장비 조건과 맞는지 확인하세요.</li>

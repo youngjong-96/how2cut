@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { searchOptimalBars } from "./exact";
-import { solveWithBestFitDecreasing } from "./heuristic";
+import { createHeuristicCandidates } from "./heuristic";
 import { buildCutPlan } from "./patterns";
-import type { CutItem, CutPiece, SolverInput, SolverResult } from "./types";
+import { createScoredCandidates, selectBestCandidate } from "./selection";
+import type { CutItem, CutPiece, OptimizationMode, SolverInput, SolverResult } from "./types";
 
 const cutItemSchema = z.object({
   id: z.string().min(1),
@@ -15,9 +16,18 @@ const solverInputSchema = z.object({
   stockLength: z.number().finite().positive(),
   kerf: z.number().finite().min(0),
   reusableRemainderLength: z.number().finite().min(0).optional(),
+  optimizationMode: z
+    .enum(["balanced", "min-remainder", "min-length-changes", "min-stock-changes"])
+    .default("balanced"),
   timeLimitMs: z.number().int().min(100).max(5000),
   items: z.array(cutItemSchema).min(1)
 });
+
+type CandidateInput = {
+  id: string;
+  source: "exact" | "heuristic";
+  bars: ReturnType<typeof createHeuristicCandidates>[number];
+};
 
 // 절단 손실을 포함해 조각 하나가 실제로 차지하는 길이를 계산한다.
 export function calculateUsedLength(length: number, kerf: number): number {
@@ -68,6 +78,32 @@ function shouldSkipExactSearch(pieces: CutPiece[]): boolean {
   return pieces.length > 64;
 }
 
+// 선택된 최적화 모드에 따라 결과 계산 방식을 표시할 값을 정한다.
+function getPlanMethod(
+  optimizationMode: OptimizationMode,
+  selectedSource: "exact" | "heuristic",
+  isExactOptimal: boolean
+): "exact" | "heuristic" | "multi-criteria" {
+  if (optimizationMode === "min-remainder" && selectedSource === "exact" && isExactOptimal) {
+    return "exact";
+  }
+
+  if (optimizationMode === "min-remainder") {
+    return "heuristic";
+  }
+
+  return "multi-criteria";
+}
+
+// 선택된 후보가 수학적 잔재 최소 최적해인지 판단한다.
+function isSelectedExactOptimal(
+  optimizationMode: OptimizationMode,
+  selectedSource: "exact" | "heuristic",
+  isExactOptimal: boolean
+): boolean {
+  return optimizationMode === "min-remainder" && selectedSource === "exact" && isExactOptimal;
+}
+
 // 절단 입력값을 검증하고 최적 또는 근사 절단 계획을 계산한다.
 export function solveCutPlan(input: SolverInput): SolverResult {
   const startedAt = Date.now();
@@ -93,46 +129,64 @@ export function solveCutPlan(input: SolverInput): SolverResult {
   }
 
   const pieces = expandCutItems(validInput.items, validInput.kerf);
-  const heuristicBars = solveWithBestFitDecreasing(pieces, validInput.stockLength);
+  const optimizationMode = validInput.optimizationMode;
+  const heuristicCandidates = createHeuristicCandidates(pieces, validInput.stockLength);
+  const candidateInputs: CandidateInput[] = heuristicCandidates.map((bars, index) => ({
+    id: `heuristic-${index + 1}`,
+    source: "heuristic",
+    bars
+  }));
   const warnings: string[] = [];
 
-  if (shouldSkipExactSearch(pieces)) {
-    warnings.push("절단 조각이 많아 빠른 근사 계산 결과를 표시합니다.");
+  if (optimizationMode !== "min-remainder") {
+    warnings.push("작업성 우선 기준에서는 잔재가 가장 적은 배치와 다른 결과가 선택될 수 있습니다.");
+  }
 
-    const elapsedMs = Date.now() - startedAt;
-    const plan = buildCutPlan(
-      heuristicBars,
+  let exactSearchIsOptimal = false;
+  let exactSearchTimedOut = false;
+
+  if (!shouldSkipExactSearch(pieces)) {
+    const exactResult = searchOptimalBars(
+      pieces,
       validInput.stockLength,
-      false,
-      "heuristic",
-      elapsedMs,
-      warnings
+      heuristicCandidates[0],
+      validInput.timeLimitMs
     );
 
-    return {
-      plan,
-      errors: [],
-      warnings
-    };
+    exactSearchIsOptimal = exactResult.isOptimal;
+    exactSearchTimedOut = exactResult.timedOut;
+
+    if (exactResult.isOptimal) {
+      candidateInputs.unshift({
+        id: "exact-1",
+        source: "exact",
+        bars: exactResult.bars
+      });
+    }
+  } else {
+    warnings.push("절단 조각이 많아 빠른 근사 계산 결과를 표시합니다.");
   }
 
-  const exactResult = searchOptimalBars(
-    pieces,
-    validInput.stockLength,
-    heuristicBars,
-    validInput.timeLimitMs
+  if (exactSearchTimedOut) {
+    warnings.push("정확 탐색 시간이 초과되어 현재까지 찾은 빠른 계산 후보를 비교합니다.");
+  }
+
+  const scoredCandidates = createScoredCandidates(candidateInputs, optimizationMode);
+  const selectedCandidate = selectBestCandidate(scoredCandidates, optimizationMode);
+  const isOptimal = isSelectedExactOptimal(
+    optimizationMode,
+    selectedCandidate.source,
+    exactSearchIsOptimal
   );
-
-  if (exactResult.timedOut) {
-    warnings.push("정확 탐색 시간이 초과되어 현재까지 찾은 빠른 계산 결과를 표시합니다.");
-  }
+  const method = getPlanMethod(optimizationMode, selectedCandidate.source, exactSearchIsOptimal);
 
   const elapsedMs = Date.now() - startedAt;
   const plan = buildCutPlan(
-    exactResult.bars,
+    selectedCandidate.bars,
     validInput.stockLength,
-    exactResult.isOptimal,
-    exactResult.method,
+    isOptimal,
+    method,
+    optimizationMode,
     elapsedMs,
     warnings
   );

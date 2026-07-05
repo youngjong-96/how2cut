@@ -1,4 +1,6 @@
 import type { CutPattern, CutPlan, CutPlanBar } from "./types";
+import { createScoredWorkPlan, normalizeBarsForWorkPlan } from "./workPlan";
+import type { OptimizationMode } from "./types";
 
 // 원자재 막대의 절단 패턴을 비교 가능한 문자열로 만든다.
 export function createPatternSignature(bar: CutPlanBar): string {
@@ -44,17 +46,13 @@ export function buildCutPlan(
   bars: CutPlanBar[],
   stockLength: number,
   isOptimal: boolean,
-  method: "exact" | "heuristic",
+  method: "exact" | "heuristic" | "multi-criteria",
+  optimizationMode: OptimizationMode,
   elapsedMs: number,
   warnings: string[]
 ): CutPlan {
-  const visibleBars = bars
-    .filter((bar) => bar.cuts.length > 0)
-    .map((bar, index) => ({
-      ...bar,
-      id: `bar-${index + 1}`,
-      cuts: [...bar.cuts].sort((left, right) => right.length - left.length)
-    }));
+  const visibleBars = normalizeBarsForWorkPlan(bars);
+  const scoredWorkPlan = createScoredWorkPlan(visibleBars, optimizationMode);
 
   const totalRequiredLength = visibleBars.reduce(
     (sum, bar) => sum + bar.cuts.reduce((cutSum, cut) => cutSum + cut.length, 0),
@@ -68,6 +66,8 @@ export function buildCutPlan(
   return {
     bars: visibleBars,
     patterns: groupBarsByPattern(visibleBars),
+    workSteps: scoredWorkPlan.workSteps,
+    score: scoredWorkPlan.score,
     totalRequiredLength,
     totalConsumedLength,
     totalStockLength,
@@ -75,6 +75,7 @@ export function buildCutPlan(
     utilizationRate,
     isOptimal,
     method,
+    optimizationMode,
     elapsedMs,
     warnings
   };

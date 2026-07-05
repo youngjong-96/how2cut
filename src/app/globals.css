@@ -140,6 +140,12 @@ button {
     font-weight: 700;
   }
 
+  .report-muted {
+    color: #615d59;
+    font-size: 8.5pt;
+    font-weight: 400;
+  }
+
   .check-cell {
     height: 28px;
     background: #ffffff;

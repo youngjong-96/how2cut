@@ -6,12 +6,14 @@ import { CutPlanSummary } from "./CutPlanSummary";
 import { CutPlanVisualizer } from "./CutPlanVisualizer";
 import { PatternSummary } from "./PatternSummary";
 import { PrintCutReport } from "./PrintCutReport";
-import type { CutPlan, SolverInput, SolverResult } from "@/lib/solver/types";
+import { WorkStepSummary } from "./WorkStepSummary";
+import type { CutPlan, OptimizationMode, SolverInput, SolverResult } from "@/lib/solver/types";
 
 type PlannerFormState = {
   stockLength: string;
   kerf: string;
   timeLimitMs: string;
+  optimizationMode: OptimizationMode;
   items: FormCutItem[];
 };
 
@@ -61,12 +63,34 @@ function createExampleState(): PlannerFormState {
     stockLength: "6000",
     kerf: "0",
     timeLimitMs: "1200",
+    optimizationMode: "balanced",
     items: [
       { id: "example-1", length: "2400", quantity: "2" },
       { id: "example-2", length: "1800", quantity: "3" },
       { id: "example-3", length: "1200", quantity: "2" },
       { id: "example-4", length: "900", quantity: "4" }
     ]
+  };
+}
+
+// 문자열 값이 지원하는 최적화 모드인지 확인한다.
+function isOptimizationMode(value: unknown): value is OptimizationMode {
+  return (
+    value === "balanced" ||
+    value === "min-remainder" ||
+    value === "min-length-changes" ||
+    value === "min-stock-changes"
+  );
+}
+
+// 저장된 폼 상태에 새 필드가 없을 때 기본값을 보강한다.
+function normalizeFormState(form: Partial<PlannerFormState>): PlannerFormState {
+  return {
+    stockLength: form.stockLength ?? "6000",
+    kerf: form.kerf ?? "0",
+    timeLimitMs: form.timeLimitMs ?? "1200",
+    optimizationMode: isOptimizationMode(form.optimizationMode) ? form.optimizationMode : "balanced",
+    items: form.items && form.items.length > 0 ? form.items : [createEmptyItem()]
   };
 }
 
@@ -87,6 +111,7 @@ function buildSolverInputFromForm(form: PlannerFormState): SolverInput {
     stockLength: parseNumericInput(form.stockLength),
     kerf: parseNumericInput(form.kerf || "0"),
     timeLimitMs: Math.round(parseNumericInput(form.timeLimitMs || "1200")),
+    optimizationMode: form.optimizationMode,
     items: form.items.map((item) => ({
       id: item.id,
       length: parseNumericInput(item.length),
@@ -106,6 +131,7 @@ function encodeShareState(form: PlannerFormState): string {
   params.set("stock", form.stockLength);
   params.set("kerf", form.kerf);
   params.set("time", form.timeLimitMs);
+  params.set("mode", form.optimizationMode);
   params.set("items", items);
 
   return params.toString();
@@ -116,6 +142,7 @@ function decodeShareState(search: string): PlannerFormState | null {
   const params = new URLSearchParams(search);
   const stockLength = params.get("stock");
   const itemsParam = params.get("items");
+  const modeParam = params.get("mode");
 
   if (!stockLength || !itemsParam) {
     return null;
@@ -142,6 +169,7 @@ function decodeShareState(search: string): PlannerFormState | null {
     stockLength,
     kerf: params.get("kerf") ?? "0",
     timeLimitMs: params.get("time") ?? "1200",
+    optimizationMode: isOptimizationMode(modeParam) ? modeParam : "balanced",
     items
   };
 }
@@ -157,7 +185,18 @@ function formatPlanForClipboard(plan: CutPlan): string {
     `필요 원자재: ${plan.bars.length}개`,
     `총 잔여 길이: ${Math.round(plan.totalRemainder)}mm`,
     `사용률: ${Math.round(plan.utilizationRate * 1000) / 10}%`,
+    `길이 변경: ${plan.score.lengthChangeCount}회`,
+    `원자재 변경: ${plan.score.stockChangeCount}회`,
     "",
+    "[작업 순서]",
+    ...plan.workSteps.map((step) => {
+      const cuts = step.cuts
+        .map((cut) => `원자재 ${cut.barNumber}번 ${cut.quantity}개`)
+        .join(", ");
+      return `${step.order}. ${step.title}: ${cuts}`;
+    }),
+    "",
+    "[원자재별 배치]",
     ...barLines
   ].join("\n");
 }
@@ -178,14 +217,14 @@ export function CutPlanner() {
     const sharedState = decodeShareState(window.location.search);
 
     if (sharedState) {
-      setForm(sharedState);
+      setForm(normalizeFormState(sharedState));
       return;
     }
 
     const savedState = window.localStorage.getItem(storageKey);
 
     if (savedState) {
-      setForm(JSON.parse(savedState) as PlannerFormState);
+      setForm(normalizeFormState(JSON.parse(savedState) as Partial<PlannerFormState>));
     }
   }, []);
 
@@ -236,6 +275,21 @@ export function CutPlanner() {
   function handleTimeLimitMsChange(value: string): void {
     setForm((currentForm) => ({ ...currentForm, timeLimitMs: value }));
     setMessage("");
+  }
+
+  // 최적화 우선순위 선택값을 갱신한다.
+  function handleOptimizationModeChange(value: OptimizationMode): void {
+    const nextForm = {
+      ...form,
+      optimizationMode: value
+    };
+
+    setForm(nextForm);
+    setMessage("");
+
+    if (plan || isSolving) {
+      runSolver(nextForm);
+    }
   }
 
   // 특정 절단 항목 행의 길이 또는 수량을 갱신한다.
@@ -313,6 +367,13 @@ export function CutPlanner() {
 
   // 현재 입력값으로 절단 계획을 계산한다.
   function handleSolve(): void {
+    runSolver(form);
+  }
+
+  // 전달받은 폼 상태로 절단 계획 계산을 실행한다.
+  function runSolver(formState: PlannerFormState): void {
+    resetSolverWorker();
+
     const worker = getSolverWorker();
     const requestId = createSolverRequestId();
 
@@ -360,7 +421,7 @@ export function CutPlanner() {
     worker.postMessage({
       type: "solve",
       requestId,
-      input: buildSolverInputFromForm(form)
+      input: buildSolverInputFromForm(formState)
     });
   }
 
@@ -411,48 +472,21 @@ export function CutPlanner() {
           </div>
         </nav>
 
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-7 sm:px-6 sm:py-10 lg:px-8">
-          <header className="grid gap-5 border-b border-hairline pb-7 lg:grid-cols-[1fr_420px] lg:items-end">
-            <div>
-              <p className="inline-flex rounded-full border border-hairline bg-canvas px-3 py-1 text-xs font-semibold text-brand">
-                Cutting planner
-              </p>
-              <h1 className="mt-4 max-w-3xl text-[40px] font-bold leading-[1.1] text-ink sm:text-[54px]">
-                알루미늄 절단 계산기
-              </h1>
-              <p className="mt-4 max-w-2xl text-base leading-7 text-muted">
-                원자재 길이와 필요한 절단 길이를 입력하면 필요한 원자재 개수와 절단 순서를
-                한 화면에서 정리합니다.
-              </p>
-            </div>
-            <div className="grid grid-cols-3 gap-2 rounded-xl border border-hairline bg-canvas p-3 text-center shadow-soft">
-              <div>
-                <p className="text-xs font-semibold text-faint">입력</p>
-                <p className="mt-1 text-sm font-bold text-ink">길이/수량</p>
-              </div>
-              <div className="border-x border-hairline">
-                <p className="text-xs font-semibold text-faint">계산</p>
-                <p className="mt-1 text-sm font-bold text-ink">최적 배치</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-faint">출력</p>
-                <p className="mt-1 text-sm font-bold text-ink">작업 지시서</p>
-              </div>
-            </div>
-          </header>
-
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
           <div className="grid gap-6 lg:grid-cols-[420px_1fr] lg:items-start">
-            <div className="lg:sticky lg:top-6">
+            <div className="lg:sticky lg:top-5">
               <CutInputForm
                 stockLength={form.stockLength}
                 kerf={form.kerf}
                 timeLimitMs={form.timeLimitMs}
+                optimizationMode={form.optimizationMode}
                 items={form.items}
                 errors={errors}
                 isSolving={isSolving}
                 onStockLengthChange={handleStockLengthChange}
                 onKerfChange={handleKerfChange}
                 onTimeLimitMsChange={handleTimeLimitMsChange}
+                onOptimizationModeChange={handleOptimizationModeChange}
                 onItemChange={handleItemChange}
                 onAddItem={handleAddItem}
                 onDuplicateItem={handleDuplicateItem}
@@ -472,6 +506,7 @@ export function CutPlanner() {
                   onPrint={handlePrint}
                   onShare={handleShare}
                 />
+                <WorkStepSummary plan={plan} />
                 <CutPlanVisualizer
                   plan={plan}
                   stockLength={parseNumericInput(form.stockLength) || 1}

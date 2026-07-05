@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Trash2
 } from "lucide-react";
+import type { OptimizationMode } from "@/lib/solver/types";
 
 export type FormCutItem = {
   id: string;
@@ -20,12 +21,14 @@ type CutInputFormProps = {
   stockLength: string;
   kerf: string;
   timeLimitMs: string;
+  optimizationMode: OptimizationMode;
   items: FormCutItem[];
   errors: string[];
   isSolving: boolean;
   onStockLengthChange: (value: string) => void;
   onKerfChange: (value: string) => void;
   onTimeLimitMsChange: (value: string) => void;
+  onOptimizationModeChange: (value: OptimizationMode) => void;
   onItemChange: (id: string, field: keyof Omit<FormCutItem, "id">, value: string) => void;
   onAddItem: () => void;
   onDuplicateItem: (id: string) => void;
@@ -40,12 +43,14 @@ export function CutInputForm({
   stockLength,
   kerf,
   timeLimitMs,
+  optimizationMode,
   items,
   errors,
   isSolving,
   onStockLengthChange,
   onKerfChange,
   onTimeLimitMsChange,
+  onOptimizationModeChange,
   onItemChange,
   onAddItem,
   onDuplicateItem,
@@ -54,26 +59,79 @@ export function CutInputForm({
   onSolve,
   onCancelSolve
 }: CutInputFormProps) {
+  const optimizationOptions: Array<{
+    value: OptimizationMode;
+    label: string;
+    description: string;
+  }> = [
+    {
+      value: "balanced",
+      label: "균형",
+      description: "잔재와 작업성을 함께 고려"
+    },
+    {
+      value: "min-remainder",
+      label: "잔재",
+      description: "원자재와 잔여 길이 최소화"
+    },
+    {
+      value: "min-length-changes",
+      label: "길이",
+      description: "같은 길이를 연속 절단"
+    },
+    {
+      value: "min-stock-changes",
+      label: "원자재",
+      description: "한 원자재를 먼저 마무리"
+    }
+  ];
+
   return (
     <section className="rounded-xl border border-hairline bg-canvas p-5 shadow-soft sm:p-6">
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="mb-5 flex flex-col gap-3">
         <div>
           <p className="inline-flex rounded-full border border-hairline bg-paper px-2.5 py-1 text-xs font-semibold text-brand">
             입력
           </p>
           <h2 className="mt-3 text-xl font-bold leading-tight text-ink">절단 조건</h2>
         </div>
-        <button
-          type="button"
-          onClick={onLoadExample}
-          className="no-print inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-hairline bg-canvas px-3 text-sm font-medium text-ink transition hover:bg-paper"
-        >
-          <RefreshCw size={16} aria-hidden="true" />
-          예시
-        </button>
+        <div className="no-print grid gap-2 sm:grid-cols-[auto_1fr_auto]">
+          <button
+            type="button"
+            onClick={onLoadExample}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-hairline bg-canvas px-3 text-sm font-medium text-ink transition hover:bg-paper"
+          >
+            <RefreshCw size={16} aria-hidden="true" />
+            예시
+          </button>
+          <button
+            type="button"
+            onClick={onSolve}
+            disabled={isSolving}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-brand px-5 text-sm font-semibold text-white shadow-soft transition hover:bg-brandActive disabled:cursor-not-allowed disabled:bg-brand/60"
+          >
+            {isSolving ? (
+              <LoaderCircle size={17} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Calculator size={17} aria-hidden="true" />
+            )}
+            {isSolving ? "계산 중" : "계산"}
+          </button>
+
+          {isSolving ? (
+            <button
+              type="button"
+              onClick={onCancelSolve}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-hairline bg-canvas px-4 text-sm font-semibold text-ink transition hover:bg-paper"
+            >
+              <CircleStop size={17} aria-hidden="true" />
+              취소
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3">
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-muted">원자재 길이(mm)</span>
           <input
@@ -106,6 +164,33 @@ export function CutInputForm({
             placeholder="1200"
           />
         </label>
+      </div>
+
+      <div className="mt-5">
+        <span className="mb-2 block text-sm font-medium text-muted">최적화 우선순위</span>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {optimizationOptions.map((option) => {
+            const isSelected = optimizationMode === option.value;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => onOptimizationModeChange(option.value)}
+                className={`min-h-16 rounded-lg border px-3 py-2 text-left transition ${
+                  isSelected
+                    ? "border-brand bg-brand text-white shadow-soft"
+                    : "border-hairline bg-paper text-ink hover:bg-white"
+                }`}
+              >
+                <span className="block text-sm font-bold">{option.label}</span>
+                <span className={`mt-0.5 block text-xs ${isSelected ? "text-white/80" : "text-muted"}`}>
+                  {option.description}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="mt-6">
@@ -182,32 +267,6 @@ export function CutInputForm({
         </div>
       ) : null}
 
-      <div className="no-print mt-5 grid gap-2 sm:grid-cols-[1fr_auto]">
-        <button
-          type="button"
-          onClick={onSolve}
-          disabled={isSolving}
-          className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-brand px-5 text-base font-semibold text-white shadow-soft transition hover:bg-brandActive disabled:cursor-not-allowed disabled:bg-brand/60"
-        >
-          {isSolving ? (
-            <LoaderCircle size={18} className="animate-spin" aria-hidden="true" />
-          ) : (
-            <Calculator size={18} aria-hidden="true" />
-          )}
-          {isSolving ? "계산 중" : "최적 절단 계산"}
-        </button>
-
-        {isSolving ? (
-          <button
-            type="button"
-            onClick={onCancelSolve}
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-hairline bg-canvas px-5 text-base font-semibold text-ink transition hover:bg-paper"
-          >
-            <CircleStop size={18} aria-hidden="true" />
-            취소
-          </button>
-        ) : null}
-      </div>
     </section>
   );
 }

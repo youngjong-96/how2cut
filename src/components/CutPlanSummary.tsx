@@ -1,5 +1,5 @@
-import { CheckCircle2, Clock, Copy, Printer, Share2, Sigma } from "lucide-react";
-import type { CutPlan } from "@/lib/solver/types";
+import { CheckCircle2, Clock, Copy, PackageCheck, Printer, Ruler, Share2, Sigma } from "lucide-react";
+import type { CutPlan, OptimizationMode } from "@/lib/solver/types";
 
 type CutPlanSummaryProps = {
   plan: CutPlan;
@@ -19,10 +19,33 @@ function formatPercent(value: number): string {
   return `${Math.round(value * 1000) / 10}%`;
 }
 
+// 최적화 모드 값을 화면에 표시할 한국어 라벨로 바꾼다.
+function getOptimizationModeLabel(mode: OptimizationMode): string {
+  const labels: Record<OptimizationMode, string> = {
+    balanced: "균형 우선",
+    "min-remainder": "최소 잔재 우선",
+    "min-length-changes": "최소 길이 변경 우선",
+    "min-stock-changes": "최소 원자재 변경 우선"
+  };
+
+  return labels[mode];
+}
+
+// 계산 방식 값을 화면에 표시할 한국어 문구로 바꾼다.
+function getMethodText(method: CutPlan["method"]): string {
+  const labels: Record<CutPlan["method"], string> = {
+    exact: "정확 탐색",
+    heuristic: "빠른 계산",
+    "multi-criteria": "작업성 비교"
+  };
+
+  return labels[method];
+}
+
 // 절단 결과의 핵심 수치를 요약해서 렌더링한다.
 export function CutPlanSummary({ plan, message, onCopy, onPrint, onShare }: CutPlanSummaryProps) {
-  const statusText = plan.isOptimal ? "최적해 확인" : "근사 결과";
-  const methodText = plan.method === "exact" ? "정확 탐색" : "빠른 계산";
+  const statusText = plan.isOptimal ? "최적해 확인" : getOptimizationModeLabel(plan.optimizationMode);
+  const methodText = getMethodText(plan.method);
 
   return (
     <section className="rounded-xl border border-hairline bg-canvas p-5 shadow-soft sm:p-6">
@@ -61,7 +84,7 @@ export function CutPlanSummary({ plan, message, onCopy, onPrint, onShare }: CutP
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <div className="rounded-lg border border-hairline bg-paper p-4">
           <p className="text-sm text-muted">필요 원자재</p>
           <p className="mt-1 text-2xl font-bold text-ink">{plan.bars.length}개</p>
@@ -79,6 +102,20 @@ export function CutPlanSummary({ plan, message, onCopy, onPrint, onShare }: CutP
           <p className="mt-1 flex items-center gap-2 text-base font-bold text-ink">
             <CheckCircle2 size={17} className="text-brand" aria-hidden="true" />
             {statusText}
+          </p>
+        </div>
+        <div className="rounded-lg border border-hairline bg-paper p-4">
+          <p className="text-sm text-muted">길이 변경</p>
+          <p className="mt-1 flex items-center gap-2 text-2xl font-bold text-ink">
+            <Ruler size={18} className="text-brand" aria-hidden="true" />
+            {plan.score.lengthChangeCount}회
+          </p>
+        </div>
+        <div className="rounded-lg border border-hairline bg-paper p-4">
+          <p className="text-sm text-muted">원자재 변경</p>
+          <p className="mt-1 flex items-center gap-2 text-2xl font-bold text-ink">
+            <PackageCheck size={18} className="text-brand" aria-hidden="true" />
+            {plan.score.stockChangeCount}회
           </p>
         </div>
       </div>
