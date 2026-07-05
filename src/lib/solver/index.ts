@@ -18,7 +18,7 @@ const solverInputSchema = z.object({
   reusableRemainderLength: z.number().finite().min(0).optional(),
   optimizationMode: z
     .enum(["balanced", "min-remainder", "min-length-changes", "min-stock-changes"])
-    .default("balanced"),
+    .default("min-remainder"),
   timeLimitMs: z.number().int().min(100).max(5000),
   items: z.array(cutItemSchema).min(1)
 });

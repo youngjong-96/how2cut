@@ -87,7 +87,7 @@ export function CutInputForm({
   ];
 
   return (
-    <section className="rounded-xl border border-hairline bg-canvas p-5 shadow-soft sm:p-6">
+    <section className="rounded-xl border-2 border-brand/25 bg-canvas p-5 shadow-soft sm:p-6">
       <div className="mb-5 flex flex-col gap-3">
         <div>
           <p className="inline-flex rounded-full border border-hairline bg-paper px-2.5 py-1 text-xs font-semibold text-brand">

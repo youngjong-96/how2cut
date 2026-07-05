@@ -48,7 +48,7 @@ export function CutPlanSummary({ plan, message, onCopy, onPrint, onShare }: CutP
   const methodText = getMethodText(plan.method);
 
   return (
-    <section className="rounded-xl border border-hairline bg-canvas p-5 shadow-soft sm:p-6">
+    <section className="rounded-xl border-2 border-stickerOrange/35 bg-canvas p-5 shadow-soft sm:p-6">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="inline-flex rounded-full border border-hairline bg-paper px-2.5 py-1 text-xs font-semibold text-brand">
